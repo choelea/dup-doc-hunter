@@ -1,0 +1,22 @@
+# Created by .ignore support plugin (hsz.mobi)
+### Example user template template
+### Example user template
+
+# IntelliJ project files
+application-joe.yml
+application-local.yml
+logs
+.idea
+*.iml
+*.ipr
+*.iws
+pom.xml.versionsBackup
+api/target/
+facade/target/
+iservice/target/
+sdk/target/
+
+application-local.yml
+/target/
+
+**/__pycache__/
