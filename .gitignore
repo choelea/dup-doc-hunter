@@ -20,3 +20,5 @@ application-local.yml
 /target/
 
 **/__pycache__/
+/test/input/
+/test/output/
