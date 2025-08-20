@@ -18,7 +18,7 @@ def calculate_jaccard_similarity(sig1, sig2):
 
 def test_directory_similarity(md_folder_path, threshold=0.5):
     """
-    测试目录中每个文件的相似度，输出超过阈值的相似文档。
+    测试目录中每个文件的相似度，输出超过阈值的结果。
     :param md_folder_path: Markdown 文件所在目录
     :param threshold: Jaccard 相似度阈值
     """
@@ -48,25 +48,20 @@ def test_directory_similarity(md_folder_path, threshold=0.5):
             documents.append(document)
 
     # 计算两两文件的相似度
-    results = {}
+    results = []
     for i, doc1 in enumerate(documents):
         doc1_sig_array = np.frombuffer(doc1.minhash_signature, dtype=np.uint64)
-        similar_docs = []
         for j in range(i + 1, len(documents)):  # 避免重复对比
             doc2 = documents[j]
             doc2_sig_array = np.frombuffer(doc2.minhash_signature, dtype=np.uint64)
             similarity = calculate_jaccard_similarity(doc1_sig_array, doc2_sig_array)
             if similarity > threshold:
-                similar_docs.append((doc2.doc_name, round(similarity, 3)))
-
-        if similar_docs:
-            results[doc1.doc_name] = similar_docs
+                results.append((doc1.doc_name, doc2.doc_name, round(similarity, 3)))
 
     # 输出结果
-    print("------------------ 目录文件相似度测试结果 -------------------------------")
-    for doc_name, similar_docs in results.items():
-        similar_doc_names = [f"{idx + 1}、{name} (相似度: {sim})" for idx, (name, sim) in enumerate(similar_docs)]
-        print(f"{doc_name}：相似文档：{'，'.join(similar_doc_names)}")
+    print("文件 A\t文件 B\t相似度")
+    for file_a, file_b, sim in results:
+        print(f"{file_a}\t{file_b}\t{sim}")
 
 
 if __name__ == "__main__":
