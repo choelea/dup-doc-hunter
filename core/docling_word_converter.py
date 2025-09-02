@@ -174,7 +174,263 @@ class DoclingWordToMarkdownConverter:
             print(f"❌ 图片上传失败: {e}")
             raise
     
-    def _extract_and_upload_images(self, doc, temp_dir: str, doc_id: str) -> Dict[str, str]:
+    def _extract_image_caption(self, picture, doc, caption_texts: Dict[int, str], picture_index: int) -> Optional[str]:
+        """
+        提取图片题注
+        
+        Args:
+            picture: Docling 图片对象
+            doc: Docling 文档对象
+            caption_texts: 包含图片相关文本的字典 {文本索引: 文本内容}
+            picture_index: 图片索引
+            
+        Returns:
+            Optional[str]: 图片题注，如果没有找到则返回 None
+        """
+        caption = None
+        
+        try:
+            # 方法1: 尝试使用 Docling 内置的题注方法
+            if hasattr(picture, 'caption_text') and callable(picture.caption_text):
+                try:
+                    caption = picture.caption_text(doc)
+                    if caption and str(caption).strip():
+                        print(f"   📝 通过 caption_text() 找到题注: {caption}")
+                        return str(caption).strip()
+                except Exception as e:
+                    print(f"   ⚠️ caption_text() 方法失败: {e}")
+            
+            # 方法2: 尝试从 captions 属性获取
+            if hasattr(picture, 'captions') and picture.captions:
+                try:
+                    if isinstance(picture.captions, list) and picture.captions:
+                        caption = str(picture.captions[0])
+                        if caption and caption.strip():
+                            print(f"   📝 通过 captions 属性找到题注: {caption}")
+                            return caption.strip()
+                    elif isinstance(picture.captions, str) and picture.captions.strip():
+                        print(f"   📝 通过 captions 属性找到题注: {picture.captions}")
+                        return picture.captions.strip()
+                except Exception as e:
+                    print(f"   ⚠️ captions 属性解析失败: {e}")
+            
+            # 方法3: 在 Markdown 中查找题注（优先级提高）
+            if hasattr(doc, 'export_to_markdown'):
+                try:
+                    markdown_content = doc.export_to_markdown()
+                    caption = self._extract_caption_from_markdown(markdown_content, picture_index)
+                    if caption:
+                        print(f"   📝 通过 Markdown 分析找到题注: {caption}")
+                        return caption
+                except Exception as e:
+                    print(f"   ⚠️ Markdown 题注提取失败: {e}")
+            
+            # 方法4: 基于位置的题注检测（最后尝试）
+            # 查找与此图片最相关的题注文本
+            potential_captions = []
+            for text_index, text_content in caption_texts.items():
+                # 检查是否是图片相关的题注
+                if self._is_likely_image_caption(text_content, picture_index):
+                    # 为题注评分，优先选择包含数字的题注
+                    score = self._score_caption_relevance(text_content, picture_index)
+                    potential_captions.append((score, text_content, text_index))
+            
+            # 按分数排序，选择最相关的题注
+            if potential_captions:
+                potential_captions.sort(key=lambda x: x[0], reverse=True)
+                best_caption = potential_captions[0][1]
+                text_index = potential_captions[0][2]
+                print(f"   📝 通过位置分析找到题注 (文本索引 {text_index}): {best_caption}")
+                return best_caption.strip()
+            
+        except Exception as e:
+            print(f"   ⚠️ 题注提取过程出错: {e}")
+        
+        return None
+    
+    def _is_likely_image_caption(self, text: str, picture_index: int) -> bool:
+        """
+        判断文本是否可能是图片题注
+        
+        Args:
+            text (str): 文本内容
+            picture_index (int): 图片索引
+            
+        Returns:
+            bool: 是否可能是题注
+        """
+        text = text.strip()
+        if not text:
+            return False
+        
+        # 检查是否包含图片相关关键词
+        image_keywords = ['图', 'Figure', 'Fig.', '图片', '示意图', '流程图', '架构图', '时序图']
+        
+        # 检查是否以数字开头（如 "图 1"，"Figure 1" 等）
+        number_patterns = [
+            r'^图\s*\d+',  # 图 1, 图1
+            r'^Figure\s*\d+',  # Figure 1
+            r'^Fig\.\s*\d+',  # Fig. 1
+            r'^\d+\.\s*图',  # 1. 图
+        ]
+        
+        # 检查模式匹配
+        for pattern in number_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        
+        # 检查是否包含图片关键词且长度合理（通常题注不会太长）
+        if any(keyword in text for keyword in image_keywords) and len(text) < 200:
+            return True
+        
+        return False
+    
+    def _extract_caption_from_markdown(self, markdown_content: str, picture_index: int) -> Optional[str]:
+        """
+        从 Markdown 内容中提取图片题注
+        
+        Args:
+            markdown_content (str): Markdown 文本
+            picture_index (int): 图片索引
+            
+        Returns:
+            Optional[str]: 提取的题注
+        """
+        try:
+            lines = markdown_content.split('\n')
+            image_comment_count = 0
+            
+            # 查找对应索引的图片注释后的题注
+            for i, line in enumerate(lines):
+                if '<!-- image -->' in line:
+                    if image_comment_count == picture_index:
+                        # 检查后续几行是否有题注
+                        for j in range(1, 5):  # 检查后续4行
+                            if i + j < len(lines):
+                                next_line = lines[i + j].strip()
+                                if next_line and self._is_likely_image_caption(next_line, picture_index):
+                                    return next_line
+                        break
+                    image_comment_count += 1
+            
+        except Exception as e:
+            print(f"   ⚠️ Markdown 题注解析失败: {e}")
+        
+        return None
+    
+    def _extract_image_caption(self, picture, doc, caption_texts: Dict[int, str], picture_index: int) -> Optional[str]:
+        """
+        提取图片题注
+        
+        Args:
+            picture: Docling 图片对象
+            doc: Docling 文档对象
+            caption_texts: 包含图片相关文本的字典 {文本索引: 文本内容}
+            picture_index: 图片索引
+            
+        Returns:
+            Optional[str]: 图片题注，如果没有找到则返回 None
+        """
+        caption = None
+        
+        try:
+            # 方法1: 尝试使用 Docling 内置的题注方法
+            if hasattr(picture, 'caption_text') and callable(picture.caption_text):
+                try:
+                    caption = picture.caption_text(doc)
+                    if caption and caption.strip():
+                        print(f"   📝 通过 caption_text() 找到题注: {caption}")
+                        return caption.strip()
+                except Exception as e:
+                    print(f"   ⚠️ caption_text() 方法失败: {e}")
+            
+            # 方法2: 尝试从 captions 属性获取
+            if hasattr(picture, 'captions') and picture.captions:
+                try:
+                    if isinstance(picture.captions, list) and picture.captions:
+                        caption = str(picture.captions[0])
+                        if caption and caption.strip():
+                            print(f"   📝 通过 captions 属性找到题注: {caption}")
+                            return caption.strip()
+                    elif isinstance(picture.captions, str) and picture.captions.strip():
+                        print(f"   📝 通过 captions 属性找到题注: {picture.captions}")
+                        return picture.captions.strip()
+                except Exception as e:
+                    print(f"   ⚠️ captions 属性解析失败: {e}")
+            
+            # 方法3: 在 Markdown 中查找题注（优先级提高）
+            if hasattr(doc, 'export_to_markdown'):
+                try:
+                    markdown_content = doc.export_to_markdown()
+                    caption = self._extract_caption_from_markdown(markdown_content, picture_index)
+                    if caption:
+                        print(f"   📝 通过 Markdown 分析找到题注: {caption}")
+                        return caption
+                except Exception as e:
+                    print(f"   ⚠️ Markdown 题注提取失败: {e}")
+            
+            # 方法4: 基于位置的题注检测（最后尝试）
+            # 查找与此图片最相关的题注文本
+            potential_captions = []
+            for text_index, text_content in caption_texts.items():
+                # 检查是否是图片相关的题注
+                if self._is_likely_image_caption(text_content, picture_index):
+                    # 为题注评分，优先选择包含数字的题注
+                    score = self._score_caption_relevance(text_content, picture_index)
+                    potential_captions.append((score, text_content, text_index))
+            
+            # 按分数排序，选择最相关的题注
+            if potential_captions:
+                potential_captions.sort(key=lambda x: x[0], reverse=True)
+                best_caption = potential_captions[0][1]
+                text_index = potential_captions[0][2]
+                print(f"   📝 通过位置分析找到题注 (文本索引 {text_index}): {best_caption}")
+                return best_caption.strip()
+            
+        except Exception as e:
+            print(f"   ⚠️ 题注提取过程出错: {e}")
+        
+        return None
+    
+    def _score_caption_relevance(self, text: str, picture_index: int) -> float:
+        """
+        为题注相关性评分
+        
+        Args:
+            text (str): 题注文本
+            picture_index (int): 图片索引
+            
+        Returns:
+            float: 相关性分数，越高越相关
+        """
+        score = 0.0
+        
+        # 检查是否包含对应的图片编号（图 1, 图 2 等）
+        expected_number = picture_index + 1
+        if f'图 {expected_number}' in text or f'图{expected_number}' in text:
+            score += 10.0
+        
+        if f'Figure {expected_number}' in text or f'Fig. {expected_number}' in text:
+            score += 10.0
+        
+        # 检查是否是具体的图片描述（而不是通用定义）
+        general_terms = ['题注：', '定义', '说明', '指', '位于', '针对']
+        if not any(term in text for term in general_terms):
+            score += 5.0
+        
+        # 短小精悍的题注得分更高
+        if len(text) < 50:
+            score += 2.0
+        elif len(text) > 200:
+            score -= 2.0
+        
+        # 包含描述性词汇的题注得分更高
+        descriptive_terms = ['示例', '流程', '结构', '界面', '功能', '操作']
+        score += sum(1.0 for term in descriptive_terms if term in text)
+        
+        return score
+    
+    def _extract_and_upload_images(self, doc, temp_dir: str, doc_id: str) -> Dict[str, Dict[str, str]]:
         """
         提取文档中的图片并上传到 MinIO
         
@@ -184,7 +440,7 @@ class DoclingWordToMarkdownConverter:
             doc_id (str): 文档 ID
             
         Returns:
-            Dict[str, str]: 图片路径映射表 {原始路径: MinIO URL}
+            Dict[str, Dict[str, str]]: 图片路径映射表 {原始路径: {'url': MinIO URL, 'caption': 题注}}
         """
         image_mapping = {}
         
@@ -193,13 +449,30 @@ class DoclingWordToMarkdownConverter:
             if hasattr(doc, 'pictures') and doc.pictures:
                 print(f"🖼️ 发现 {len(doc.pictures)} 张图片")
                 
+                # 获取所有文本对象，用于题注检测
+                caption_texts = {}
+                if hasattr(doc, 'texts') and doc.texts:
+                    for i, text_item in enumerate(doc.texts):
+                        if hasattr(text_item, 'text') and text_item.text:
+                            text = text_item.text.strip()
+                            # 检查是否包含图片相关关键词
+                            if any(keyword in text for keyword in ['图', 'Figure', 'Fig.', '图片', '示意图', '流程图', '架构图', '时序图']):
+                                caption_texts[i] = text
+                                print(f"   📝 找到候选题注文本 {i}: {text}")
+                
                 for i, picture in enumerate(doc.pictures):
                     try:
                         print(f"🔄 处理图片 {i+1}/{len(doc.pictures)}")
                         
                         # 检查图片对象的属性
                         print(f"   图片对象类型: {type(picture)}")
-                        print(f"   图片对象属性: {dir(picture)}")
+                        
+                        # 尝试获取图片题注
+                        caption = self._extract_image_caption(picture, doc, caption_texts, i)
+                        if caption:
+                            print(f"   📝 检测到题注: {caption}")
+                        else:
+                            print(f"   📝 未检测到题注，使用默认值")
                         
                         # 尝试获取图片数据
                         image_data = None
@@ -302,7 +575,7 @@ class DoclingWordToMarkdownConverter:
                         minio_object_name = f"images/{doc_id}/{image_filename}"
                         image_url = self._upload_image_to_minio(image_path, minio_object_name)
                         
-                        # 记录映射关系
+                        # 记录映射关系，包含题注信息
                         # 使用图片索引作为原始引用
                         original_ref = f"image_{i}"
                         if hasattr(picture, 'prov') and picture.prov:
@@ -310,8 +583,14 @@ class DoclingWordToMarkdownConverter:
                         elif hasattr(picture, 'id') and picture.id:
                             original_ref = str(picture.id)
                         
-                        image_mapping[original_ref] = image_url
-                        print(f"   ✅ 图片映射: {original_ref} -> {image_url}")
+                        # 将题注信息也存储在映射中
+                        final_caption = caption if caption else '图片'
+                        image_mapping[original_ref] = {
+                            'url': image_url,
+                            'caption': final_caption
+                        }
+                        
+                        print(f"   ✅ 图片映射: {original_ref} -> {image_url} (题注: {final_caption})")
                         
                     except Exception as e:
                         print(f"   ❌ 处理图片 {i} 时出错: {e}")
@@ -370,13 +649,13 @@ class DoclingWordToMarkdownConverter:
             print(f"⚠️ 获取图片扩展名时出错: {e}")
             return 'png'  # 默认 PNG
     
-    def _replace_images_in_markdown(self, markdown_text: str, image_mapping: Dict[str, str]) -> str:
+    def _replace_images_in_markdown(self, markdown_text: str, image_mapping: Dict[str, Dict[str, str]]) -> str:
         """
-        替换 Markdown 中的图片链接
+        替换 Markdown 中的图片链接，使用检测到的题注作为 alt 文本
         
         Args:
             markdown_text (str): 原始 Markdown 文本
-            image_mapping (Dict[str, str]): 图片路径映射表
+            image_mapping (Dict[str, Dict[str, str]]): 图片映射表 {ref: {'url': url, 'caption': caption}}
             
         Returns:
             str: 替换后的 Markdown 文本
@@ -384,29 +663,39 @@ class DoclingWordToMarkdownConverter:
         if not image_mapping:
             return markdown_text
         
-        # 替换图片链接
-        for original_ref, minio_url in image_mapping.items():
-            # 匹配各种可能的图片引用格式
-            patterns = [
-                rf'!\[([^\]]*)\]\([^)]*{re.escape(str(original_ref))}[^)]*\)',  # ![alt](path)
-                rf'<img[^>]*src=["\'][^"\']*{re.escape(str(original_ref))}[^"\']*["\'][^>]*>',  # <img src="path">
-                rf'{re.escape(str(original_ref))}'  # 直接引用
-            ]
-            
-            for pattern in patterns:
-                if re.search(pattern, markdown_text):
-                    # 保持 alt 文本，只替换 URL
-                    def replace_func(match):
-                        if match.group().startswith('!['):
-                            alt_text = re.search(r'!\[([^\]]*)\]', match.group())
-                            alt = alt_text.group(1) if alt_text else ""
-                            return f"![{alt}]({minio_url})"
-                        elif match.group().startswith('<img'):
-                            return re.sub(r'src=["\'][^"\']*["\']', f'src="{minio_url}"', match.group())
-                        else:
-                            return minio_url
-                    
-                    markdown_text = re.sub(pattern, replace_func, markdown_text)
+        # 提取图片信息列表
+        image_infos = list(image_mapping.values())
+        
+        # Docling 生成的 Markdown 中图片用 <!-- image --> 注释标记
+        # 我们需要按顺序替换这些注释
+        image_comment_pattern = r'<!-- image -->'
+        matches = list(re.finditer(image_comment_pattern, markdown_text))
+        
+        if not matches:
+            print("   ⚠️ 未找到图片注释标记")
+            return markdown_text
+        
+        print(f"   🔍 找到 {len(matches)} 个图片注释标记")
+        
+        # 从后往前替换，避免位置偏移
+        for i, match in enumerate(reversed(matches)):
+            if i < len(image_infos):
+                # 获取对应的图片信息
+                image_info = image_infos[-(i+1)]  # 反向索引
+                image_url = image_info['url']
+                caption = image_info['caption']
+                
+                # 创建 Markdown 图片语法，使用题注作为 alt 文本
+                img_markdown = f"![{caption}]({image_url})"
+                
+                # 替换注释
+                start, end = match.span()
+                markdown_text = markdown_text[:start] + img_markdown + markdown_text[end:]
+                
+                print(f"   ✅ 替换图片 {len(matches)-i}: <!-- image --> -> {img_markdown}")
+            else:
+                print(f"   ⚠️ 图片注释多于上传的图片数量")
+                break
         
         return markdown_text
     

@@ -33,16 +33,14 @@ def test_with_real_minio():
             minio_access_key=MINIO_ACCESS_KEY,
             minio_secret_key=MINIO_SECRET_KEY,
             minio_bucket=MINIO_BUCKET,
-            minio_secure=False,  # HTTP 连接
-            image_url_prefix=f"http://{MINIO_ENDPOINT}"  # 自定义 URL 前缀
+            minio_secure=False  # 禁用 SSL
         )
         
         print("✅ DoclingWordToMarkdownConverter 初始化成功")
         
         # 测试本地文件
         test_files = [
-            "input/sample.docx",
-            "input/企业AI 知识文档治理规范性建议.docx"
+            "input/神码问学-知识中心设计.docx"
         ]
         
         for test_file in test_files:
