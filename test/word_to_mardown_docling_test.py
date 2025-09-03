@@ -65,17 +65,57 @@ def convert_doc_to_markdown(source_file: str, target_file: str) -> bool:
 
 
 def main():
-    """主函数，用于命令行测试"""
-    if len(sys.argv) != 3:
-        print("用法: python word_to_mardown_docling_test.py <源文件路径> <目标文件路径>")
-        print("示例: python word_to_mardown_docling_test.py input/sample.docx output/sample.md")
+    """主函数，测试 input 目录下的所有 Word 文档"""
+    # 获取当前脚本所在目录
+    script_dir = Path(__file__).parent
+    input_dir = script_dir / "input"
+    output_dir = script_dir / "output"
+    
+    # 确保输出目录存在
+    output_dir.mkdir(exist_ok=True)
+    
+    # 查找所有 Word 文档
+    word_files = list(input_dir.glob("*.docx")) + list(input_dir.glob("*.doc"))
+    
+    if not word_files:
+        print("❌ 在 input 目录中没有找到 Word 文档")
         sys.exit(1)
     
-    source_file = sys.argv[1]
-    target_file = sys.argv[2]
+    print(f"🚀 开始测试 {len(word_files)} 个 Word 文档的转换")
+    print("=" * 60)
     
-    success = convert_doc_to_markdown(source_file, target_file)
-    sys.exit(0 if success else 1)
+    success_count = 0
+    total_count = len(word_files)
+    
+    for word_file in word_files:
+        print(f"\n📄 处理文档: {word_file.name}")
+        
+        # 生成对应的 Markdown 文件名
+        md_filename = word_file.stem + ".md"
+        target_file = output_dir / md_filename
+        
+        # 转换文档
+        success = convert_doc_to_markdown(str(word_file), str(target_file))
+        
+        if success:
+            success_count += 1
+            print(f"✅ 成功转换: {word_file.name} -> {md_filename}")
+        else:
+            print(f"❌ 转换失败: {word_file.name}")
+    
+    print("\n" + "=" * 60)
+    print(f"📊 转换完成统计:")
+    print(f"   总计: {total_count} 个文档")
+    print(f"   成功: {success_count} 个")
+    print(f"   失败: {total_count - success_count} 个")
+    print(f"   成功率: {success_count/total_count*100:.1f}%")
+    
+    if success_count == total_count:
+        print("🎉 所有文档转换成功!")
+        sys.exit(0)
+    else:
+        print("⚠️ 部分文档转换失败")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
